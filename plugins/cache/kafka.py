@@ -122,21 +122,11 @@ class CacheModule(BaseCacheModule):
 	return
 
     #########################################################
-    #### ping Kafka cluster
-    #########################################################
-    def _esping(self):
-        if self.es.ping():
-           return True
-        display.error('failed to ping host %s %s' % 
-                            ( self._settings['kafka_brokers'], 
-                              self._settings['es_port']))
-        return False
-
-    #########################################################
     ####  Get Cache from local file or Kafka cluster
     #########################################################
     def get(self, key):
         ### DISABLED : TODO
+        pass;
         #########################################################
         #### OFFLINE Read from file  
         #########################################################
@@ -232,11 +222,12 @@ class CacheModule(BaseCacheModule):
 
 	  ### Convert the object json string
 	  jd = json.dumps(filter_val, cls=AnsibleJSONEncoder, sort_keys=True, indent=4)
-	  ########################################################
-          #%## Send json to Kafka
-	  ########################################################
+	########################################################
+        #%## Send json to Kafka
+	########################################################
           try:
             display.vvv("Kafka insert document id='%s' doc = '%s' " % ( value['ansible_hostname'] , jd ))
+	    producer.send('test', value )
         # TODO: SEND to Kafka
         #   result = self.es.index(
 	#		index=self._settings['es_index'], 
