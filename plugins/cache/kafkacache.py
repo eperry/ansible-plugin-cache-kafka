@@ -9,6 +9,8 @@ from ansible.plugins.cache import BaseCacheModule
 display = Display()
 __metaclass__ = type
 
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
 
 import os
 import json
@@ -53,6 +55,7 @@ DOCUMENTATION = '''
 
 class CacheModule(BaseCacheModule):
     def __init__(self,*args, **kwargs):
+	display.v("in __init__")
         #############################################
         ####  Handle default way of configuring plugins even though we won't use it
         #############################################
@@ -93,10 +96,10 @@ class CacheModule(BaseCacheModule):
         ####################################################
         #### Initialize Elasticsearch
         ####################################################
-        try:
-          self._kafka = __import__('KafkaProducer')
-        except ImportError:
-          raise AnsibleError('Failed to import Kafka module. Maybe you can use pip to install! %s' % to_native(e))
+        #try:
+          #self._kafka = __import__('KafkaProducer')
+        #except ImportError as e:
+          #raise AnsibleError('Failed to import Kafka module. Maybe you can use pip to install! %s' % to_native(e))
         #####################################################
         #### Initialize _cache file
         #####################################################
@@ -111,10 +114,13 @@ class CacheModule(BaseCacheModule):
     #### Connect to Kafka cluster
     #########################################################
     def _connect(self):
+	display.v("in connect")
         try:
-          return  self._kafka(bootstrap_servers=self._settings['kafka_brokers'],
-                         value_serializer=lambda x: 
-                         dumps(x).encode('utf-8'))
+          return  KafkaProducer(bootstrap_servers=self._settings['kafka_brokers'],
+		 	value_serializer=lambda m: json.dumps(m).encode('ascii'))
+          #return  KafkaProducer(bootstrap_servers=self._settings['kafka_brokers'],
+          #               value_serializer=lambda x: 
+          #               dumps(x).encode('utf-8'))
         except Exception as e: 
           raise AnsibleError('Failed to connect to kafka %s %s' % 
 				(self._settings['kafka_brokers'], 
@@ -125,8 +131,9 @@ class CacheModule(BaseCacheModule):
     ####  Get Cache from local file or Kafka cluster
     #########################################################
     def get(self, key):
+	display.v("In get")
+        return "{}";
         ### DISABLED : TODO
-        pass;
         #########################################################
         #### OFFLINE Read from file  
         #########################################################
@@ -154,22 +161,30 @@ class CacheModule(BaseCacheModule):
 	  # TODO: Read from kafka
 
 	#return self._cache.get(key)
+	#return;
 
     #########################################################
     ####  SET Cache  local file and Elasticsearch cluster
     #########################################################
     def set(self, key, value):
+       display.v("In set")
        #########################################################
        ####  deep Get Attribute: process  dot notation 
        #########################################################
-        def deepgetattr(obj, attr):
+       def deepgetattr(obj, attr):
           keys = attr.split('.')
-          return functools.reduce(lambda d, key: d.get(key) if d else None, keys, obj)
+	  display.v("%s" % keys)
+	  try:
+            return functools.reduce(lambda d, key: d.get(key) if d else None, keys, obj)
+          except Exception as e:
+	      display.v("%s" % keys)
+                           #to_native(e)))
 
+          
        #########################################################
        ####  deep Set Attribute: process  dot notation 
        #########################################################
-        def deepsetattr(attr, val):
+       def deepsetattr(attr, val):
           obj={}
           if attr:
             a = attr.pop(0)
@@ -177,14 +192,14 @@ class CacheModule(BaseCacheModule):
             return obj
           return val
 
-        #############################################
-	#### Unfiltered values json string
-        #############################################
-	js = json.dumps(value, cls= AnsibleJSONEncoder, sort_keys=True, indent=4)
-        #############################################
-        ### Write Unfiltered data to local cache file
-        #############################################
-        if "local_cache_directory" in self._settings:
+       #############################################
+       #### Unfiltered values json string
+       #############################################
+       js = json.dumps(value, cls= AnsibleJSONEncoder, sort_keys=True, indent=4)
+       #############################################
+       ### Write Unfiltered data to local cache file
+       #############################################
+       if "local_cache_directory" in self._settings:
           #write_local_cache_directory  is assumed not sure why you would turn it off if you set a cache directory
           display.vvv("writing to file %s" % self._settings['local_cache_directory']+"/"+key )
           try:
@@ -206,28 +221,27 @@ class CacheModule(BaseCacheModule):
 	    raise AnsibleError("Error opening file for writing %s with error %s" % 
                          ( self._settings['local_cache_directory']+"/"+key,
                            to_native(e)))
-        else:
+       else:
             display.vvv("local_cache_directory not set skipping")
-	#########################################################
-        ### Filter Cache data and send to Kafka
-        #########################################################
-        # TODO: check if kakfa is available before sending
-        if true:
-	  filter_val={}
-          ### Filter fields
-	  for ff in self._settings['field_filter']:
-	    attr = ff.split('.')
-	    a = attr.pop(0)
-	    filter_val[a] = deepsetattr(attr,deepgetattr(value,ff))
+       #########################################################
+       ### Filter Cache data and send to Kafka
+       #########################################################
+       # TODO: check if kakfa is available before sending
+       filter_val={}
+       ### Filter fields
+       for ff in self._settings['field_filter']:
+	  attr = ff.split('.')
+	  a = attr.pop(0)
+	  filter_val[a] = deepsetattr(attr,deepgetattr(value,ff))
 
-	  ### Convert the object json string
-	  jd = json.dumps(filter_val, cls=AnsibleJSONEncoder, sort_keys=True, indent=4)
-	########################################################
-        #%## Send json to Kafka
-	########################################################
-          try:
-            display.vvv("Kafka insert document id='%s' doc = '%s' " % ( value['ansible_hostname'] , jd ))
-	    producer.send('test', value )
+       ### Convert the object json string
+       jd = json.dumps(filter_val, cls=AnsibleJSONEncoder, sort_keys=True, indent=4)
+       ########################################################
+       #%## Send json to Kafka
+       ########################################################
+       try:
+          display.v("Kafka insert document id='%s' doc = '%s' " % ( value['ansible_hostname'] , jd ))
+	  self._producer.send('test', jd )
         # TODO: SEND to Kafka
         #   result = self.es.index(
 	#		index=self._settings['es_index'], 
@@ -238,14 +252,15 @@ class CacheModule(BaseCacheModule):
         #      return True
 	#    else:
         #      display.error("Results %s" % json.dumps(result))
-          except Exception as e:
-            raise AnsibleError('Error failed to insert data to kafka %s' % to_native(e))
-        return False
+       except Exception as e:
+         raise AnsibleError('Error "%s"\n"%s"' % ( to_native(e), value))
+       return False
 
     #########################################################
     ####  get the key for all caching objects
     #########################################################
     def keys(self):
+        display.v("In keys")
 	display.v("in keys function %s" % json.dumps(self));
         return self._cache.keys()
 
@@ -253,6 +268,7 @@ class CacheModule(BaseCacheModule):
     ####  Is there a Cacheable object available
     #########################################################
     def contains(self, key):
+	display.v("In contains")
         #####################################################
         #### TODO: Search Kafka
         #####################################################
@@ -265,6 +281,7 @@ class CacheModule(BaseCacheModule):
     ####  Delete cacheable object
     #########################################################
     def delete(self, key):
+	display.v("In delete")
         #### Delete from memory cache
         try:
           del self._cache[key]
@@ -290,6 +307,7 @@ class CacheModule(BaseCacheModule):
     ####  flush cacheable objects: Wipe all cache values
     #########################################################
     def flush(self):
+	display.v("In flush")
 	display.error("flush function not fully implemented");
         #TODO: need to flush from Elasticsearch
         for key in self._cache.keys():
@@ -300,9 +318,30 @@ class CacheModule(BaseCacheModule):
     ####  copy cacheable objects
     #########################################################
     def copy(self):
+	display.v("In copy")
         #TODO: need to flush from Elasticsearch
 	display.error("copy function not fully implemented");
         ret = dict()
         for key in self.keys():
             ret[key] = self.get(key)
         return ret
+
+if __name__ == '__main__':
+  KEY = "TESTHOST"
+  CACHE='''{
+    "ansible_date_time": {
+        "epoch": "1571248184"
+    }, 
+    "ansible_distribution": "RedHat", 
+    "ansible_domain": "digital.hbc.com", 
+    "ansible_fqdn": "hd1qrc16nx.digital.hbc.com", 
+    "ansible_hostname": "hd1ptwr01lx", 
+    "ansible_nodename": "hd1ptwr01lx.digital.hbc.com", 
+    "ansible_os_family": "RedHat", 
+    "ansible_pkg_mgr": "yum"
+    }'''
+  from ansible.plugins.loader import cache_loader
+  plugin = cache_loader.get('kafkacache')
+  plugin = CacheModule()
+  CACHE=json.loads(CACHE)
+  plugin.set(KEY,CACHE)
